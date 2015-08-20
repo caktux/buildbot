@@ -176,7 +176,7 @@ class GitHubEventHandler(object):
         if payload['forced']:
             files = []
             for kind in ('added', 'modified', 'removed'):
-                files.extend(commit.get(kind, []))
+                files.extend(payload['head_commit'].get(kind, []))
 
             change = {
                 'author': payload['head_commit']['committer']['username'],
