@@ -49,6 +49,7 @@ def _getGitHubState(results):
 
 
 class GitHubStatus(StatusReceiverMultiService):
+
     """
     Send build status to GitHub.
 
@@ -59,7 +60,7 @@ class GitHubStatus(StatusReceiverMultiService):
 
     def __init__(self, token, repoOwner, repoName, sha=None,
                  startDescription=None, endDescription=None,
-                 baseURL=None):
+                 baseURL=None, context=None):
         """
         Token for GitHub API.
         """
@@ -71,6 +72,7 @@ class GitHubStatus(StatusReceiverMultiService):
         self._sha = sha or Interpolate("%(src::revision)s")
         self._repoOwner = repoOwner
         self._repoName = repoName
+        self._context = context or Interpolate("buildbot/%(prop:buildername)s")
         self._startDescription = startDescription or "Build started."
         self._endDescription = endDescription or "Build done."
 
@@ -119,7 +121,6 @@ class GitHubStatus(StatusReceiverMultiService):
             'state': 'pending',
             'description': description,
             'builderName': builderName,
-            'context': builderName,
             'startDateTime': datetime.fromtimestamp(startTime).isoformat(' '),
             'endDateTime': 'In progress',
             'duration': 'In progress',
@@ -154,7 +155,6 @@ class GitHubStatus(StatusReceiverMultiService):
             'state': state,
             'description': description,
             'builderName': builderName,
-            'context': builderName,
             'startDateTime': datetime.fromtimestamp(startTime).isoformat(' '),
             'endDateTime': datetime.fromtimestamp(endTime).isoformat(' '),
             'duration': duration,
@@ -168,10 +168,11 @@ class GitHubStatus(StatusReceiverMultiService):
         """
         Return a dictionary with GitHub related properties from `build`.
         """
-        repoOwner, repoName, sha = yield defer.gatherResults([
+        repoOwner, repoName, sha, context = yield defer.gatherResults([
             build.render(self._repoOwner),
             build.render(self._repoName),
             build.render(self._sha),
+            build.render(self._context),
         ])
 
         if not repoOwner or not repoName:
@@ -187,6 +188,7 @@ class GitHubStatus(StatusReceiverMultiService):
             'sha': sha,
             'targetURL': self._status.getURLForThing(build),
             'buildNumber': str(build.getNumber()),
+            'context': context,
         }
         defer.returnValue(result)
 
@@ -201,8 +203,8 @@ class GitHubStatus(StatusReceiverMultiService):
             sha=status['sha'].encode('utf-8'),
             state=status['state'].encode('utf-8'),
             target_url=status['targetURL'].encode('utf-8'),
-            context=status['context'].encode('utf-8'),
             description=status['description'].encode('utf-8'),
+            context=status['context'].encode('utf-8'),
         )
 
         success_message = (

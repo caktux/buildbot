@@ -16,7 +16,7 @@
 import hmac
 import logging
 import re
-import requests
+import warnings
 
 from hashlib import sha1
 
@@ -113,18 +113,40 @@ class GitHubEventHandler(object):
         return changes, 'git'
 
     def handle_pull_request(self, payload):
-        # This field is unused:
-        user = None
-        # user = payload['pusher']['name']
-        repo = payload['repository']['name']
-        repo_url = payload['repository']['clone_url']
-        # NOTE: what would be a reasonable value for project?
-        # project = request.args.get('project', [''])[0]
-        project = payload['repository']['name']
+        changes = []
+        number = payload['number']
+        refname = 'refs/pull/%d/head' % (number,)
+        commits = payload['pull_request']['commits']
 
-        changes = self._process_pull_request(payload, user, repo, repo_url, project,
-                                       self._codebase)
-        log.msg("Received %d PR changes from github" % len(changes))
+        log.msg('Processing GitHub PR #%d' % number, logLevel=logging.DEBUG)
+
+        action = payload.get('action')
+        if action not in ('opened', 'reopened', 'synchronize'):
+            log.msg("GitHub PR #%d %s, ignoring" % (number, action))
+            return changes, 'git'
+
+        change = {
+            'revision': payload['pull_request']['head']['sha'],
+            'when_timestamp': dateparse(payload['pull_request']['created_at']),
+            'branch': refname,
+            'revlink': payload['pull_request']['_links']['html']['href'],
+            'repository': payload['repository']['clone_url'],
+            'category': 'pull',
+            # TODO: Get author name based on login id using txgithub module
+            'author': payload['sender']['login'],
+            'comments': 'GitHub Pull Request #%d (%d commit%s)' % (
+                number, commits, 's' if commits != 1 else ''),
+        }
+
+        if callable(self._codebase):
+            change['codebase'] = self._codebase(payload)
+        elif self._codebase is not None:
+            change['codebase'] = self._codebase
+
+        changes.append(change)
+
+        log.msg("Received %d changes from GitHub PR #%d" % (
+            len(changes), number))
         return changes, 'git'
 
     def _process_change(self, payload, user, repo, repo_url, project):
@@ -177,75 +199,10 @@ class GitHubEventHandler(object):
                 'project': project
             }
 
-            if self._codebase is not None:
+            if callable(self._codebase):
+                change['codebase'] = self._codebase(payload)
+            elif self._codebase is not None:
                 change['codebase'] = self._codebase
-
-            changes.append(change)
-
-        return changes
-
-    def _process_pull_request(self, payload, user, repo, repo_url, project, codebase=None):
-        changes = []
-        number = payload['number']
-
-        # We only care about opened/reopened/synchronize pull requests
-        if payload['action'] not in ['opened', 'reopened', 'synchronize']:
-            log.msg("Ignoring `%s': Not an opened pull request" % number)
-            return changes
-
-        # refname = payload['pull_request']['head']['ref']
-        branch = 'refs/pull/%s/head' % number
-        category = 'pull-request'
-
-        if payload['pull_request']['mergeable'] == False:
-            log.msg("Pull request `%s' not mergeable, ignoring" % branch)
-            return changes
-
-        r = requests.get(payload['pull_request']['commits_url'] + "?per_page=100")
-        commits = json.loads(r.text)
-
-        for commit in commits:
-            if 'distinct' in commit and not commit['distinct']:
-                log.msg('Commit `%s` is a non-distinct commit, ignoring...' %
-                        (commit['sha'],))
-                continue
-
-            files = []
-            commit_url = ''
-            if 'url' in commit:
-                commit_url = commit['url']
-                r = requests.get(commit_url)
-                commit_files = json.loads(r.text)
-
-                if commit_files and 'files' in commit_files:
-                    for f in commit_files['files']:
-                        if f['status'] == 'added':
-                            files.append(f['filename'])
-                        if f['status'] == 'modified':
-                            files.append(f['filename'])
-                        if f['status'] == 'removed':
-                            files.append(f['filename'])
-
-            when_timestamp = dateparse(commit['commit']['author']['date'])
-
-            log.msg("New PR revision: %s" % commit['sha'][:8])
-
-            change = {
-                'author': '%s <%s>' % (commit['commit']['author']['name'],
-                                       commit['commit']['author']['email']),
-                'files': files,
-                'comments': commit['commit']['message'],
-                'revision': commit['sha'],
-                'when_timestamp': when_timestamp,
-                'branch': branch,
-                'category': category,
-                'revlink': commit_url,
-                'repository': repo_url,
-                'project': project
-            }
-
-            if codebase is not None:
-                change['codebase'] = codebase
 
             changes.append(change)
 
@@ -260,7 +217,10 @@ def getChanges(request, options=None):
         request
             the http request object
     """
-    if options is None:
+    if options is None or (isinstance(options, bool) and options):
+        if options is not None:
+            warnings.warn('Use of True for GitHub hook is deprecated.  '
+                          'Please see the documentation for possible values')
         options = {}
 
     klass = options.get('class', GitHubEventHandler)

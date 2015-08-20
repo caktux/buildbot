@@ -166,17 +166,21 @@ At the moment, Buildbot contains two implementations of most source steps:
    Both implementations perform the checkout on the slave side.
    The difference is where the parameters are processed and where the logic is implemented.
 
-   The old source steps are imported like this::
+   The old source steps are imported like this:
+
+   .. code-block:: python
 
        from buildbot.steps.source.oldsource import Git
 
-       ... Git ...
+       # ... Git ...
 
-    while new source steps are in separate Python modules for each version-control system and, using the plugin infrastructure are available as::
+    while new source steps are in separate Python modules for each version-control system and, using the plugin infrastructure are available as:
+
+   .. code-block:: python
 
        from buildbot.plugins import steps
 
-       ... steps.Git ...
+       # ... steps.Git ...
 
 
 New users should, where possible, use the new implementations.
@@ -360,6 +364,10 @@ The Git step takes the following arguments:
 ``reference``
    (optional): use the specified string as a path to a reference repository on the local machine.
    Git will try to grab objects from this path first instead of the main repository, if they exist.
+
+``origin``
+   (optional): By default, any clone will use the name "origin" as the remote repository (eg, "origin/master").
+   This renderable option allows that to be configured to an alternate name.
 
 ``progress``
    (optional): passes the (``--progress``) flag to (:command:`git fetch`).
@@ -846,7 +854,9 @@ This rendereable integrates with :bb:chsrc:`GerritChangeSource`, and will automa
 
    You can use the two above Rendereable in conjuction by using the class ``buildbot.process.properties.FlattenList``
 
-for example::
+for example:
+
+.. code-block:: python
 
     ftom buildbot.plugins import steps, util
 
@@ -2249,7 +2259,7 @@ To run trial tests manually, you run the :command:`trial` executable and tell it
 The most common way of doing this is with a module name.
 For petmail, this might look like :command:`trial petmail.test`, which would locate all the :file:`test_*.py` files under :file:`petmail/test/`, running every test case it could find in them.
 Unlike the ``unittest.py`` that comes with Python, it is not necessary to run the :file:`test_foo.py` as a script; you always let trial do the importing and running.
-The step's ``tests``` parameter controls which tests trial will run: it can be a string or a list of strings.
+The step's ``tests`` parameter controls which tests trial will run: it can be a string or a list of strings.
 
 To find the test cases, the Python search path must allow something like ``import petmail.test`` to work.
 For packages that don't use a separate top-level :file:`lib` directory, ``PYTHONPATH=.`` will work, and will use the test cases (and the code they are testing) in-place.
@@ -2564,6 +2574,163 @@ LogRenderable
 This build step takes content which can be renderable and logs it in a pretty-printed format.
 It can be useful for debugging properties during a build.
 
+.. _handle-related-builds:
+
+Handling Related Builds
+-----------------------
+
+There are situations when you want to cancel and/or stop related builds (for example, when the Buildbot is configured to build every new change, however build results for an older change might not be relevant any more).
+To handle these situations Buildbot offers two build steps (which are executed on master):
+
+* CancelRelatedBuilds
+* StopRelatedBuilds
+
+and specific implementation for Gerrit
+
+* CancelGerritRelatedBuilds
+* StopGerritRelatedBuilds
+
+These steps work in a pretty much same way: they look at possible candidates' source stamps and decide whether the step is relevant based on own source stamp.
+If the source stamps are somehow relevant (decided by a function provided as a parameter), then the corresponding build request will be cancelled, or the corresponding build will be stopped.
+
+.. bb:step:: CancelRelatedBuilds
+
+CancelRelatedBuilds
++++++++++++++++++++
+
+.. py:class:: buildbot.steps.master.CancelRelatedBuilds
+
+Beside `common parameters <Buildstep-Common-Parameters>`_ `CancelRelatedBuilds` accepts following parameters:
+
+``builderNames``
+    This is the set of builders which this step will check for possible candidates.
+    Possible values:
+
+    ``None``
+        check all builders known to the system
+
+    list of strings
+        check only these builders
+
+``preProcess``
+    This is an optional parameter to specify a function that would preprocess own build's source stamp.
+    This might be useful if the computations are extensive and there could be a lot of possible candidates to check.
+    Default: just use own build's source stamp.
+
+    .. code-block:: python
+
+        def preProcess(source_stamps):
+            """
+            :returns: what is passed as the first argument to `isRelevant`
+            """
+
+``isRelevant``
+    This is a mandatory parameter to specify a function that would take two parameters: own source stamps (possibly pre-processed) and the source stamps of the candidate build request.
+    If this function returns `True`, the candidate will be cancelled.
+
+    .. code-block:: python
+
+        def isRelevant(own_source_stamps, their_source_stamps):
+            """
+            :type own_source_stamps: either list(SourceStamp) or what is returned by `preProcess`
+            :type their_source_stamps: list(SourceStamp)
+            """
+
+    .. note::
+
+       It is possible that by the time the cancel request is sent, the corresponding build request is already started to build.
+
+.. bb:step:: StopRelatedBuilds
+
+StopRelatedBuilds
++++++++++++++++++
+
+.. py:class:: buildbot.steps.master.StopRelatedBuilds
+
+Beside `common parameters <Buildstep-Common-Parameters>`_ `StopRelatedBuilds` accepts following parameters:
+
+``builderNames``
+    This is the set of builders which this step will check for possible candidates.
+    Possible values:
+
+    ``None``
+        check all builders known to the system
+
+    list of strings
+        check only these builders
+
+``preProcess``
+    This is an optional parameter to specify a function that would preprocess own build's source stamp.
+    This might be useful if the computations are extensive and there could be a lot of possible candidates to check.
+    Default: just use own build's source stamp.
+
+    .. code-block:: python
+
+        def preProcess(source_stamps):
+            """
+            :returns: what is passed as the first argument to `isRelevant`
+            """
+
+``isRelevant``
+    This is a mandatory parameter to specify a function that would take two parameters: own source stamp (possibly pre-processed) and the source stamp of the candidate build.
+    If this function returns `True`, the candidate will be stopped.
+
+    .. code-block:: python
+
+        def isRelevant(own_source_stamps, their_source_stamps):
+            """
+            :type own_source_stamps: either list(SourceStamp) or what is returned by `preProcess`
+            :type their_source_stamps: list(SourceStamp)
+            """
+
+    .. note::
+
+       It is possible that by the time the stop request is sent, the corresponding build request is already finished.
+
+``reason`` (default: `Stopped by StopRelatedBuilds`)
+    This is an optional parameter to specify a string that will be used as a reason for stopping candidates.
+
+.. bb:step:: CancelGerritRelatedBuilds
+
+CancelGerritRelatedBuilds
++++++++++++++++++++++++++
+
+This is a convenience step that provides `preProcess` and `isRelevant` parameters to constructor of `CancelRelatedBuilds`.
+It's a rough equivalent of:
+
+.. code-block:: python
+
+    from buildbot.plugins import steps, util
+
+    class CancelGerritRelatedBuilds(CancelRelatedBuilds):
+        def __init__(self, **kwargs):
+            CancelRelatedBuilds.__init__(
+                self,
+                preProcess=util.gerrit.pre_process,
+                isRelevant=util.gerrit.is_relevant,
+                **kwargs)
+
+.. bb:step:: StopGerritRelatedBuilds
+
+StopGerritRelatedBuilds
++++++++++++++++++++++++
+
+This is a convenience step that provides `preProcess`, `isRelevant` and `reason` parameters to constructor of `StopRelatedBuilds`.
+It's a rough equivalent of:
+
+.. code-block:: python
+
+    from buildbot.plugins import steps, util
+
+    class StopGerritRelatedBuilds(StopRelatedBuilds):
+        def __init__(self, **kwargs):
+            StopRelatedBuilds.__init__(
+                self,
+                preProcess=util.gerrit.pre_process,
+                isRelevant=util.gerrit.is_relevant,
+                reason='A new patch set for the same change is submitted',
+                **kwargs)
+
 .. index:: Properties; from steps
 
 .. _Setting-Properties:
@@ -2708,6 +2875,11 @@ For example::
 Triggering Schedulers
 ---------------------
 
+ .. py:class:: Trigger(schedulerNames=[], sourceStamp=None, sourceStamps=None,
+                  updateSourceStamp=None, alwaysUseLatest=False,
+                  waitForFinish=False, set_properties={},
+                  copy_properties=[])
+
 The counterpart to the Triggerable described in section :bb:Sched:`Triggerable` is the :bb:step:`Trigger` build step::
 
     from buildbot.plugins import steps
@@ -2717,31 +2889,62 @@ The counterpart to the Triggerable described in section :bb:Sched:`Triggerable` 
                             updateSourceStamp=True,
                             set_properties={'quick' : False}))
 
-The ``schedulerNames=`` argument lists the :bb:sched:`Triggerable` schedulers that should be triggered when this step is executed.
-Note that it is possible, but not advisable, to create a cycle where a build continually triggers itself, because the schedulers are specified by name.
-
-If ``waitForFinish`` is ``True``, then the step will not finish until all of the builds from the triggered schedulers have finished.
-Hyperlinks are added to the waterfall and the build detail web pages for each triggered build.
-If this argument is ``False`` (the default) or not given, then the buildstep succeeds immediately after triggering the schedulers.
-
 The SourceStamps to use for the triggered build are controlled by the arguments ``updateSourceStamp``, ``alwaysUseLatest``, and ``sourceStamps``.
-If ``updateSourceStamp`` is ``True`` (the default), then step updates the source stamps given to the :bb:sched:`Triggerable` schedulers to include ``got_revision`` (the revision actually used in this build) as ``revision`` (the revision to use in the triggered builds).
-This is useful to ensure that all of the builds use exactly the same source stamps, even if other :class:`Change`\s have occurred while the build was running.
-If ``updateSourceStamp`` is False (and neither of the other arguments are specified), then the exact same SourceStamps are used.
-If ``alwaysUseLatest`` is True, then no SourceStamps are given, corresponding to using the latest revisions of the repositories specified in the Source steps.
-This is useful if the triggered builds use to a different source repository.
-The argument ``sourceStamps`` accepts a list of dictionaries containing the keys ``branch``, ``revision``, ``repository``, ``project``, and optionally ``patch_level``, ``patch_body``, ``patch_subdir``, ``patch_author`` and ``patch_comment`` and creates the corresponding SourceStamps.
-If only one sourceStamp has to be specified then the argument ``sourceStamp`` can be used for a dictionary containing the keys mentioned above.
-The arguments ``updateSourceStamp``, ``alwaysUseLatest``, and ``sourceStamp`` can be specified using properties.
 
-The ``set_properties`` parameter allows control of the properties that are passed to the triggered scheduler.
-The parameter takes a dictionary mapping property names to values.
-You may use :ref:`Interpolate` here to dynamically construct new property values.
-For the simple case of copying a property, this might look like::
+Hyperlinks are added to the build detail web pages for each triggered build.
 
-    set_properties={"my_prop1" : Property("my_prop1")}
+:param schedulerNames:
+    lists the :bb:sched:`Triggerable` schedulers that should be triggered when this step is executed.
+
+    .. note::
+
+        It is possible, but not advisable, to create a cycle where a build continually triggers itself, because the schedulers are specified by name.
+:param waitForFinish:
+    * If ``True``, the step will not finish until all of the builds from the triggered schedulers have finished.
+    * If ``False`` (the default) or not given, then the buildstep succeeds immediately after triggering the schedulers.
+
+:param updateSourceStamp:
+    * If ``True`` (the default), then step updates the source stamps given to the :bb:sched:`Triggerable` schedulers to include ``got_revision`` (the revision actually used in this build) as ``revision`` (the revision to use in the triggered builds).
+        This is useful to ensure that all of the builds use exactly the same source stamps, even if other :class:`Change`\s have occurred while the build was running.
+    * If ``False`` (and neither of the other arguments are specified), then the exact same SourceStamps are used.
+
+:param alwaysUseLatest:
+    If ``True``, then no SourceStamps are given, corresponding to using the latest revisions of the repositories specified in the Source steps.
+    This is useful if the triggered builds use to a different source repository.
+
+:param sourceStamps:
+    Accepts a list of dictionaries containing the keys ``branch``, ``revision``, ``repository``, ``project``, and optionally ``patch_level``, ``patch_body``, ``patch_subdir``, ``patch_author`` and ``patch_comment`` and creates the corresponding SourceStamps.
+    If only one sourceStamp has to be specified then the argument ``sourceStamp`` can be used for a dictionary containing the keys mentioned above.
+    The arguments ``updateSourceStamp``, ``alwaysUseLatest``, and ``sourceStamp`` can be specified using properties.
+
+:param set_properties:
+    allows control of the properties that are passed to the triggered scheduler.
+    The parameter takes a dictionary mapping property names to values.
+    You may use :ref:`Interpolate` here to dynamically construct new property values.
+    For the simple case of copying a property, this might look like::
+
+        set_properties={"my_prop1" : Property("my_prop1")}
 
 The ``copy_properties`` parameter, given a list of properties to copy into the new build request, has been deprecated in favor of explicit use of ``set_properties``.
+
+Dynamic Trigger
++++++++++++++++
+
+Sometimes it is desirable to select which scheduler to trigger, and which properties to set dynamically, at the time of the build.
+For this purpose, Trigger step support a method that you can customize in order to override statically defined ``schedulernames``, and ``set_properties``.
+
+.. py:method:: getSchedulersAndProperties()
+
+    :returns: list of tuples (schedulerName, propertiesDict) optionally via deferred
+
+    This methods returns a list of tuples describing what scheduler to trigger, with which properties.
+    The properties should already be rendered (ie, concrete value, not objects wrapped by ``Interpolate`` or
+    ``Property``). Since this function happens at build-time, the property values are available from the
+    step and can be used to decide what schedulers or properties to use.
+
+    With this method, you can also trigger the same scheduler multiple times with different set of properties.
+    The sourcestamp configuration is however the same for each triggered build request.
+
 
 RPM-Related Steps
 -----------------
