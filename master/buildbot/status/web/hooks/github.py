@@ -172,6 +172,26 @@ class GitHubEventHandler(object):
             log.msg("Branch `%s' deleted, ignoring" % branch)
             return changes
 
+        # Forced push has no commits, get the head_commit and files instead
+        if payload['forced']:
+            files = []
+            for kind in ('added', 'modified', 'removed'):
+                files.extend(commit.get(kind, []))
+
+            change = {
+                'author': payload['head_commit']['committer']['username'],
+                'files': files,
+                'comments': payload['head_commit']['message'],
+                'revision': payload['head_commit']['id'],
+                'when_timestamp': dateparse(payload['head_commit']['timestamp']),
+                'branch': branch,
+                'revlink': payload['head_commit']['url'],
+                'repository': repo_url,
+                'project': project
+            }
+
+            changes.append(change)
+
         for commit in payload['commits']:
             if not commit.get('distinct', True):
                 log.msg('Commit `%s` is a non-distinct commit, ignoring...' %
