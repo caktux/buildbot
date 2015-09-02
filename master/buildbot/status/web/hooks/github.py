@@ -193,10 +193,10 @@ class GitHubEventHandler(object):
             changes.append(change)
 
         for commit in payload['commits']:
-            if not commit.get('distinct', True):
-                log.msg('Commit `%s` is a non-distinct commit, ignoring...' %
-                        (commit['id'],))
-                continue
+            # if not commit.get('distinct', True):
+            #     log.msg('Commit `%s` is a non-distinct commit, ignoring...' %
+            #             (commit['id'],))
+            #     continue
 
             files = []
             for kind in ('added', 'modified', 'removed'):
